@@ -73,41 +73,50 @@ app.get("/product/:id", async (req, res) => {
 });
 
 app.post("/add/:id", authenticate, async (req, res) => {
+    try {
+        const productId = req.params.id;
 
-    const productId = req.params.id;
-
-    let user = await UserModel.findOne({
-        mail: req.user.email
-    });
-
-    if (!user) {
-        user = new UserModel({
-            mail: req.user.email,
-            name: req.user.name || "User",
-            cart: [],
-            orders: []
+        let user = await UserModel.findOne({
+            mail: req.user.email
         });
+
+        if (!user) {
+            user = new UserModel({
+                mail: req.user.email,
+                name: req.user.name || "User",
+                cart: [],
+                orders: []
+            });
+        }
+
+        user.cart = user.cart || [];
+        user.cart.push(productId);
+
+        await user.save();
+
+        res.json({
+            message: "Product added to cart",
+            count: user.cart.length
+        });
+    } catch (error) {
+        console.error("Error in /add/:id:", error);
+        res.status(500).json({ message: "Failed to add product to cart", error: error.message });
     }
-
-    user.cart.push(productId);
-
-    await user.save();
-
-    res.json({
-        message: "Product added to cart",
-        count: user.cart.length
-    });
 });
 
 app.get("/cart/count", authenticate, async (req, res) => {
+    try {
+        const user = await UserModel.findOne({
+            mail: req.user.email
+        });
 
-    const user = await UserModel.findOne({
-        mail: req.user.email
-    });
-
-    res.json({
-        count: user && user.cart ? user.cart.length : 0
-    });
+        res.json({
+            count: user && user.cart ? user.cart.length : 0
+        });
+    } catch (error) {
+        console.error("Error in /cart/count:", error);
+        res.status(500).json({ count: 0, error: error.message });
+    }
 });
 
 
