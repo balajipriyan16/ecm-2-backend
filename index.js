@@ -23,10 +23,35 @@ const razorpay = new Razorpay({
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/db1";
 
-mongoose.connect(MONGODB_URI).then(() => {
-    console.log("DB CONNECTED");
-}).catch(() => {
-    console.log("DB Not Connected");
+let isConnected = false;
+
+async function connectDB() {
+    if (isConnected && mongoose.connection.readyState === 1) {
+        return;
+    }
+
+    try {
+        await mongoose.connect(MONGODB_URI, {
+            serverSelectionTimeoutMS: 8000,
+        });
+        isConnected = true;
+        console.log("DB CONNECTED");
+    } catch (err) {
+        console.error("DB Connection Error:", err);
+        throw err;
+    }
+}
+
+app.use(async (req, res, next) => {
+    if (req.path.startsWith("/images") || req.path.startsWith("/image")) {
+        return next();
+    }
+    try {
+        await connectDB();
+        next();
+    } catch (err) {
+        return res.status(500).json({ message: "Database connection failed", error: err.message });
+    }
 });
 
 const UserModel = mongoose.model("usermodel", {
@@ -37,10 +62,14 @@ const UserModel = mongoose.model("usermodel", {
 }, "users");
 
 app.get("/user", authenticate, async (req, res) => {
-    const data = await UserModel.findOne({
-        mail: req.user.email
-    });
-    res.json(data || null);
+    try {
+        const data = await UserModel.findOne({
+            mail: req.user.email
+        });
+        res.json(data || null);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching user data", error: error.message });
+    }
 });
 
 const ProductModel = mongoose.model("productmodel", {
@@ -48,17 +77,17 @@ const ProductModel = mongoose.model("productmodel", {
     description: String,
     price: Number,
     category: String,
-}, "products")
+}, "products");
 
-app.get("/products", (req, res) => {
-    ProductModel.find().then((data) => {
+app.get("/products", async (req, res) => {
+    try {
+        const data = await ProductModel.find();
         res.json(data);
-    }).catch((err) => {
-        console.log(err);
-        res.json({ message: "Error" });
-    })
-
-})
+    } catch (err) {
+        console.error("Error fetching products:", err);
+        res.status(500).json({ message: "Error fetching products", error: err.message });
+    }
+});
 
 app.get("/product/:id", async (req, res) => {
     try {
