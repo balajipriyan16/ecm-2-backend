@@ -1,0 +1,101 @@
+[
+  {
+    "id": "6ab978ea5a59081bef77f5e6",
+    "name": "iPhone 17",
+    "file": "6ab978ea5a59081bef77f5e6.jpg",
+    "source": "https://www.machines.com.my/cdn/shop/files/iPhone_17_Black_PDP_Image_Position_1_Black_Colour__MY-EN.jpg?v=1757462345&width=1200",
+    "dimensions": [
+      1200,
+      1200
+    ],
+    "note": ""
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5e7",
+    "name": "Samsung Galaxy S26",
+    "file": "6ab978ea5a59081bef77f5e7.jpg",
+    "source": "https://s3.us-east-1.amazonaws.com/product-image-bucket-prod-us/884036-Product-0-I-639058416002406199.jpg",
+    "dimensions": [
+      1200,
+      1200
+    ],
+    "note": ""
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5e8",
+    "name": "OnePlus 14",
+    "file": "6ab978ea5a59081bef77f5e8.jpg",
+    "source": "https://image.alza.cz/products/ONE0096c1/ONE0096c1.jpg",
+    "dimensions": [
+      943,
+      1200
+    ],
+    "note": "Representative OnePlus 13 image"
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5e9",
+    "name": "MacBook Air M4",
+    "file": "6ab978ea5a59081bef77f5e9.jpg",
+    "source": "https://cdn.ecommercedns.uk/files/9/252269/3/49701453/mba13-m4-silver-gallery1-202503.jpg",
+    "dimensions": [
+      1200,
+      922
+    ],
+    "note": ""
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5ea",
+    "name": "ASUS ROG Strix G16",
+    "file": "6ab978ea5a59081bef77f5ea.jpg",
+    "source": "https://brightstarcomp.com/cdn/shop/files/Web_UN3447W_1.jpg?v=1770261416",
+    "dimensions": [
+      1000,
+      1000
+    ],
+    "note": ""
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5eb",
+    "name": "HP Pavilion 15",
+    "file": "6ab978ea5a59081bef77f5eb.jpg",
+    "source": "https://microport.in/cdn/shop/files/7S4N6PA-1_T1682044771_5df324f7-a299-4ffa-9518-bca5713095ef.png?v=1687244306",
+    "dimensions": [
+      1200,
+      901
+    ],
+    "note": ""
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5ec",
+    "name": "Sony Bravia 55-inch 4K TV",
+    "file": "6ab978ea5a59081bef77f5ec.jpg",
+    "source": "https://i5.walmartimages.com/asr/17c27f98-689b-40a6-bd86-c3da9126992f.5f9987ed4571294f7ea0107d48a71aad.jpeg?odnBg=FFFFFF&odnHeight=1200&odnWidth=1200",
+    "dimensions": [
+      1200,
+      1200
+    ],
+    "note": ""
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5ed",
+    "name": "LG 43-inch 4K Smart TV",
+    "file": "6ab978ea5a59081bef77f5ed.jpg",
+    "source": "https://i5.walmartimages.com/asr/743380bf-f573-4ba2-9fd3-8adb0c008114.6b6f122b56897a9dd2f1ba8475d0da36.jpeg",
+    "dimensions": [
+      1000,
+      1000
+    ],
+    "note": ""
+  },
+  {
+    "id": "6ab978ea5a59081bef77f5ee",
+    "name": "Samsung 260L Refrigerator",
+    "file": "6ab978ea5a59081bef77f5ee.jpg",
+    "source": "https://www.transtel.co.ug/2233-large_default/samsung-rt26har2dsa-2-door-260l-inox-top-freezer.jpg",
+    "dimensions": [
+      800,
+      800
+    ],
+    "note": ""
+  }
+]
