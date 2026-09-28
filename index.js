@@ -4,13 +4,16 @@ import cors from "cors";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import Razorpay from "razorpay";
+import path from "path";
 import authenticate from "./authMiddleware.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use("/images", express.static("images"));
-app.use("/image", express.static("images"));
+
+const imagesPath = path.resolve("images");
+app.use("/images", express.static(imagesPath));
+app.use("/image", express.static(imagesPath));
 
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_API_KEY,
