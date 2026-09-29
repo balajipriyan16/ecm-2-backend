@@ -1,383 +1,1108 @@
 import "dotenv/config";
+
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import Razorpay from "razorpay";
 import path from "path";
+
 import authenticate from "./authMiddleware.js";
 
 const app = express();
+
+
+// =======================================================
+// MIDDLEWARE
+// =======================================================
+
 app.use(cors());
 app.use(express.json());
 
 const imagesPath = path.resolve("images");
+
 app.use("/images", express.static(imagesPath));
 app.use("/image", express.static(imagesPath));
 
-const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_API_KEY,
-    key_secret: process.env.RAZORPAY_API_SECRET,
-});
+
+// =======================================================
+// ENV
+// =======================================================
 
 const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/db1";
+const MONGODB_URI = process.env.MONGODB_URI;
 
-let isConnected = false;
+if (!MONGODB_URI) {
+    throw new Error("MONGODB_URI is not defined");
+}
+
+
+// =======================================================
+// MONGODB CONNECTION
+// Optimized for Vercel / Serverless
+// =======================================================
+
+const cached = globalThis.mongooseCache || {
+    conn: null,
+    promise: null,
+};
+
+globalThis.mongooseCache = cached;
+
 
 async function connectDB() {
-    if (isConnected && mongoose.connection.readyState === 1) {
-        return;
+
+    // Already connected
+    if (cached.conn) {
+        return cached.conn;
+    }
+
+    // Prevent multiple simultaneous connections
+    if (!cached.promise) {
+
+        cached.promise = mongoose.connect(MONGODB_URI, {
+
+            serverSelectionTimeoutMS: 5000,
+
+            maxPoolSize: 10,
+
+            minPoolSize: 0,
+
+        })
+        .then((mongooseInstance) => {
+
+            console.log("MongoDB Connected");
+
+            return mongooseInstance;
+
+        });
     }
 
     try {
-        await mongoose.connect(MONGODB_URI, {
-            serverSelectionTimeoutMS: 8000,
-        });
-        isConnected = true;
-        console.log("DB CONNECTED");
-    } catch (err) {
-        console.error("DB Connection Error:", err);
-        throw err;
+
+        cached.conn = await cached.promise;
+
+        return cached.conn;
+
+    } catch (error) {
+
+        cached.promise = null;
+
+        console.error("MongoDB Connection Error:", error);
+
+        throw error;
     }
 }
 
-app.use(async (req, res, next) => {
-    if (req.path.startsWith("/images") || req.path.startsWith("/image")) {
-        return next();
-    }
-    try {
-        await connectDB();
-        next();
-    } catch (err) {
-        return res.status(500).json({ message: "Database connection failed", error: err.message });
-    }
-});
 
-const UserModel = mongoose.model("usermodel", {
-    name: String,
-    mail: String,
-    cart: Array,
-    orders: Array,
-}, "users");
+// =======================================================
+// RAZORPAY
+// =======================================================
 
-app.get("/user", authenticate, async (req, res) => {
-    try {
-        const data = await UserModel.findOne({
-            mail: req.user.email
-        });
-        res.json(data || null);
-    } catch (error) {
-        res.status(500).json({ message: "Error fetching user data", error: error.message });
-    }
-});
+const razorpay = new Razorpay({
 
-const ProductModel = mongoose.model("productmodel", {
-    name: String,
-    description: String,
-    price: Number,
-    category: String,
-}, "products");
+    key_id: process.env.RAZORPAY_API_KEY,
 
-app.get("/products", async (req, res) => {
-    try {
-        const data = await ProductModel.find();
-        res.json(data);
-    } catch (err) {
-        console.error("Error fetching products:", err);
-        res.status(500).json({ message: "Error fetching products", error: err.message });
-    }
-});
+    key_secret: process.env.RAZORPAY_API_SECRET,
 
-app.get("/product/:id", async (req, res) => {
-    try {
-        const product = await ProductModel.findById(req.params.id);
-        if (!product) {
-            return res.status(404).json({ message: "Product not found" });
-        }
-        res.json(product);
-    } catch (error) {
-        res.status(500).json({ message: "Error fetching product details", error: error.message });
-    }
-});
-
-app.post("/add/:id", authenticate, async (req, res) => {
-    try {
-        const productId = req.params.id;
-
-        let user = await UserModel.findOne({
-            mail: req.user.email
-        });
-
-        if (!user) {
-            user = new UserModel({
-                mail: req.user.email,
-                name: req.user.name || "User",
-                cart: [],
-                orders: []
-            });
-        }
-
-        user.cart = user.cart || [];
-        user.cart.push(productId);
-
-        await user.save();
-
-        res.json({
-            message: "Product added to cart",
-            count: user.cart.length
-        });
-    } catch (error) {
-        console.error("Error in /add/:id:", error);
-        res.status(500).json({ message: "Failed to add product to cart", error: error.message });
-    }
-});
-
-app.get("/cart/count", authenticate, async (req, res) => {
-    try {
-        const user = await UserModel.findOne({
-            mail: req.user.email
-        });
-
-        res.json({
-            count: user && user.cart ? user.cart.length : 0
-        });
-    } catch (error) {
-        console.error("Error in /cart/count:", error);
-        res.status(500).json({ count: 0, error: error.message });
-    }
 });
 
 
-app.get("/cart", authenticate, async (req, res) => {
-    try {
-        const user = await UserModel.findOne({
-            mail: req.user.email
-        });
+// =======================================================
+// SCHEMAS
+// =======================================================
 
-        if (!user || !user.cart || user.cart.length === 0) {
-            return res.json([]);
-        }
+const userSchema = new mongoose.Schema(
+    {
+        name: {
+            type: String,
+            trim: true,
+        },
 
-        // Count occurrences of each product ID in user's cart array
-        const counts = {};
-        user.cart.forEach((id) => {
-            if (id) {
-                const idStr = id.toString();
-                counts[idStr] = (counts[idStr] || 0) + 1;
-            }
-        });
+        mail: {
+            type: String,
+            required: true,
+            unique: true,
+            index: true,
+            lowercase: true,
+            trim: true,
+        },
 
-        const productIds = Object.keys(counts).filter((id) =>
-            mongoose.Types.ObjectId.isValid(id)
-        );
+        cart: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "productmodel",
+            },
+        ],
 
-        if (productIds.length === 0) {
-            return res.json([]);
-        }
+        orders: [
+            {
+                orderId: String,
 
-        const products = await ProductModel.find({ _id: { $in: productIds } });
+                paymentId: String,
 
-        // Merge product details with quantity
-        const cartItems = products.map((prod) => {
-            const prodObj = prod.toObject();
-            return {
-                ...prodObj,
-                quantity: counts[prod._id.toString()] || 1
-            };
-        });
+                amount: Number,
 
-        res.json(cartItems);
-    } catch (error) {
-        console.error("Cart endpoint error:", error);
-        res.status(500).json({ message: "Error fetching cart items", error: error.message });
+                items: Array,
+
+                date: {
+                    type: Date,
+                    default: Date.now,
+                },
+
+                status: {
+                    type: String,
+                    default: "SUCCESS",
+                },
+            },
+        ],
+    },
+    {
+        versionKey: false,
     }
-});
+);
 
-// Increase quantity of a product in cart
-app.post("/cart/increase/:id", authenticate, async (req, res) => {
-    try {
-        const productId = req.params.id;
-        const user = await UserModel.findOne({ mail: req.user.email });
 
-        if (!user) return res.status(404).json({ message: "User not found" });
+const productSchema = new mongoose.Schema(
+    {
+        name: {
+            type: String,
+            required: true,
+            trim: true,
+        },
 
-        user.cart.push(productId);
-        await user.save();
+        description: String,
 
-        res.json({ message: "Quantity increased", count: user.cart.length });
-    } catch (error) {
-        res.status(500).json({ message: "Error increasing quantity", error: error.message });
+        price: {
+            type: Number,
+            required: true,
+        },
+
+        category: {
+            type: String,
+            index: true,
+        },
+    },
+    {
+        versionKey: false,
     }
-});
-
-// Decrease quantity of a product in cart
-app.post("/cart/decrease/:id", authenticate, async (req, res) => {
-    try {
-        const productId = req.params.id;
-        const user = await UserModel.findOne({ mail: req.user.email });
-
-        if (!user) return res.status(404).json({ message: "User not found" });
-
-        const index = user.cart.indexOf(productId);
-        if (index > -1) {
-            user.cart.splice(index, 1);
-            await user.save();
-        }
-
-        res.json({ message: "Quantity decreased", count: user.cart.length });
-    } catch (error) {
-        res.status(500).json({ message: "Error decreasing quantity", error: error.message });
-    }
-});
-
-// Remove item completely from cart
-app.delete("/cart/remove/:id", authenticate, async (req, res) => {
-    try {
-        const productId = req.params.id;
-        const user = await UserModel.findOne({ mail: req.user.email });
-
-        if (!user) return res.status(404).json({ message: "User not found" });
-
-        user.cart = user.cart.filter((id) => id.toString() !== productId);
-        await user.save();
-
-        res.json({ message: "Item removed from cart", count: user.cart.length });
-    } catch (error) {
-        res.status(500).json({ message: "Error removing item", error: error.message });
-    }
-});
-
-// Create Razorpay Order
-app.post("/create-order", authenticate, async (req, res) => {
-    try {
-        const { amount } = req.body;
-        if (!amount || amount <= 0) {
-            return res.status(400).json({ message: "Invalid amount" });
-        }
-
-        const options = {
-            amount: Math.round(amount * 100), // amount in paise
-            currency: "INR",
-            receipt: `receipt_${Date.now()}`
-        };
-
-        const order = await razorpay.orders.create(options);
-        res.json({
-            id: order.id,
-            currency: order.currency,
-            amount: order.amount,
-            key: process.env.RAZORPAY_API_KEY
-        });
-    } catch (error) {
-        console.error("Razorpay order error:", error);
-        res.status(500).json({ message: "Order creation failed", error: error.message });
-    }
-});
-
-// Verify Razorpay Payment Signature and Save Order History
-app.post("/verify-payment", authenticate, async (req, res) => {
-    try {
-        const {
-            razorpay_order_id,
-            razorpay_payment_id,
-            razorpay_signature,
-            cartItems,
-            totalAmount
-        } = req.body;
-
-        const body = razorpay_order_id + "|" + razorpay_payment_id;
-        const expectedSignature = crypto
-            .createHmac("sha256", process.env.RAZORPAY_API_SECRET)
-            .update(body.toString())
-            .digest("hex");
-
-        if (expectedSignature === razorpay_signature) {
-            const user = await UserModel.findOne({ mail: req.user.email });
-
-            if (user) {
-                const newOrder = {
-                    orderId: razorpay_order_id,
-                    paymentId: razorpay_payment_id,
-                    amount: totalAmount,
-                    items: cartItems || [],
-                    date: new Date().toISOString(),
-                    status: "SUCCESS"
-                };
-
-                user.orders = user.orders || [];
-                user.orders.unshift(newOrder); // Add latest order at start
-                user.cart = []; // Clear cart on success
-                await user.save();
-            }
-
-            res.json({ message: "Payment verified successfully", success: true });
-        } else {
-            res.status(400).json({ message: "Invalid signature", success: false });
-        }
-    } catch (error) {
-        res.status(500).json({ message: "Payment verification failed", error: error.message });
-    }
-});
-
-// Get User Order History
-app.get("/orders/history", authenticate, async (req, res) => {
-    try {
-        const user = await UserModel.findOne({ mail: req.user.email });
-        if (!user) return res.status(404).json({ message: "User not found" });
-
-        res.json(user.orders || []);
-    } catch (error) {
-        res.status(500).json({ message: "Error fetching order history", error: error.message });
-    }
-});
+);
 
 
+// Prevent model overwrite issues on Vercel
+const UserModel =
+    mongoose.models.usermodel ||
+    mongoose.model(
+        "usermodel",
+        userSchema,
+        "users"
+    );
 
 
-app.post("/register", async (req, res) => {
-  try {
-    const email = req.body.email;
-    const name = req.body.name;
+const ProductModel =
+    mongoose.models.productmodel ||
+    mongoose.model(
+        "productmodel",
+        productSchema,
+        "products"
+    );
 
-    const user = await UserModel.findOne({
-      mail: email,
-    });
 
-    if (user) {
-      return res.json({
-        message: "User already exists",
-        user: user,
-      });
-    }
+// =======================================================
+// BASIC ROUTE
+// =======================================================
 
-    const newUser = new UserModel({
-      mail: email,
-      name: name,
-      cart: [],
-      orders: [],
-    });
-
-    await newUser.save();
+app.get("/", (req, res) => {
 
     res.json({
-      message: "User registered successfully",
-      user: newUser,
+        message: "MyKart API Running",
     });
-  } catch (error) {
-    res.status(500).json({
-      message: "Registration failed",
-      error: error.message,
-    });
-  }
+
 });
 
 
-export default app;
+// =======================================================
+// PRODUCTS
+// =======================================================
 
-if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
-    app.listen(PORT, () => {
-        console.log(`Server Started on port ${PORT}`);
+app.get("/products", async (req, res, next) => {
+
+    try {
+
+        await connectDB();
+
+        const products = await ProductModel
+            .find()
+            .lean();
+
+        res.json(products);
+
+    } catch (error) {
+
+        next(error);
+
+    }
+
+});
+
+
+// =======================================================
+// SINGLE PRODUCT
+// =======================================================
+
+app.get("/product/:id", async (req, res, next) => {
+
+    try {
+
+        await connectDB();
+
+        const { id } = req.params;
+
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+
+            return res.status(400).json({
+                message: "Invalid product ID",
+            });
+
+        }
+
+
+        const product = await ProductModel
+            .findById(id)
+            .lean();
+
+
+        if (!product) {
+
+            return res.status(404).json({
+                message: "Product not found",
+            });
+
+        }
+
+
+        res.json(product);
+
+    } catch (error) {
+
+        next(error);
+
+    }
+
+});
+
+
+// =======================================================
+// REGISTER USER
+// =======================================================
+
+app.post("/register", async (req, res, next) => {
+
+    try {
+
+        await connectDB();
+
+        const { email, name } = req.body;
+
+
+        if (!email) {
+
+            return res.status(400).json({
+                message: "Email required",
+            });
+
+        }
+
+
+        const normalizedEmail = email
+            .toLowerCase()
+            .trim();
+
+
+        // Avoid findOne + create
+        // upsert handles both cases efficiently
+
+        const user = await UserModel.findOneAndUpdate(
+
+            {
+                mail: normalizedEmail,
+            },
+
+            {
+                $setOnInsert: {
+                    mail: normalizedEmail,
+                    name: name || "User",
+                    cart: [],
+                    orders: [],
+                },
+            },
+
+            {
+                new: true,
+                upsert: true,
+            }
+
+        ).lean();
+
+
+        res.json({
+            message: "User registered successfully",
+            user,
+        });
+
+    } catch (error) {
+
+        next(error);
+
+    }
+
+});
+
+
+// =======================================================
+// GET USER
+// =======================================================
+
+app.get(
+    "/user",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const user = await UserModel
+                .findOne({
+                    mail: req.user.email.toLowerCase(),
+                })
+                .lean();
+
+
+            res.json(user || null);
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// ADD TO CART
+// =======================================================
+
+app.post(
+    "/add/:id",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const { id } = req.params;
+
+
+            if (!mongoose.Types.ObjectId.isValid(id)) {
+
+                return res.status(400).json({
+                    message: "Invalid product ID",
+                });
+
+            }
+
+
+            const user = await UserModel.findOneAndUpdate(
+
+                {
+                    mail: req.user.email.toLowerCase(),
+                },
+
+                {
+                    $push: {
+                        cart: id,
+                    },
+
+                    $setOnInsert: {
+                        name: req.user.name || "User",
+                    },
+                },
+
+                {
+                    new: true,
+                    upsert: true,
+                }
+
+            )
+            .select("cart")
+            .lean();
+
+
+            res.json({
+
+                message: "Product added to cart",
+
+                count: user.cart.length,
+
+            });
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// CART COUNT
+// =======================================================
+
+app.get(
+    "/cart/count",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const user = await UserModel
+                .findOne({
+                    mail: req.user.email.toLowerCase(),
+                })
+                .select("cart")
+                .lean();
+
+
+            res.json({
+
+                count: user?.cart?.length || 0,
+
+            });
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// GET CART
+// =======================================================
+
+app.get(
+    "/cart",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const user = await UserModel
+                .findOne({
+                    mail: req.user.email.toLowerCase(),
+                })
+                .select("cart")
+                .lean();
+
+
+            if (!user?.cart?.length) {
+
+                return res.json([]);
+
+            }
+
+
+            // Count quantity
+            const counts = {};
+
+            for (const id of user.cart) {
+
+                const idString = id.toString();
+
+                counts[idString] =
+                    (counts[idString] || 0) + 1;
+
+            }
+
+
+            const productIds =
+                Object.keys(counts);
+
+
+            const products = await ProductModel
+                .find({
+                    _id: {
+                        $in: productIds,
+                    },
+                })
+                .lean();
+
+
+            const cartItems = products.map(
+                (product) => ({
+
+                    ...product,
+
+                    quantity:
+                        counts[
+                            product._id.toString()
+                        ] || 1,
+
+                })
+            );
+
+
+            res.json(cartItems);
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// INCREASE CART QUANTITY
+// =======================================================
+
+app.post(
+    "/cart/increase/:id",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const { id } = req.params;
+
+
+            if (!mongoose.Types.ObjectId.isValid(id)) {
+
+                return res.status(400).json({
+                    message: "Invalid product ID",
+                });
+
+            }
+
+
+            const user = await UserModel.findOneAndUpdate(
+
+                {
+                    mail: req.user.email.toLowerCase(),
+                },
+
+                {
+                    $push: {
+                        cart: id,
+                    },
+                },
+
+                {
+                    new: true,
+                }
+
+            )
+            .select("cart")
+            .lean();
+
+
+            if (!user) {
+
+                return res.status(404).json({
+                    message: "User not found",
+                });
+
+            }
+
+
+            res.json({
+
+                message: "Quantity increased",
+
+                count: user.cart.length,
+
+            });
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// DECREASE CART QUANTITY
+// Removes only ONE occurrence
+// =======================================================
+
+app.post(
+    "/cart/decrease/:id",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const { id } = req.params;
+
+
+            const user = await UserModel.findOne({
+
+                mail: req.user.email.toLowerCase(),
+
+            });
+
+
+            if (!user) {
+
+                return res.status(404).json({
+                    message: "User not found",
+                });
+
+            }
+
+
+            const index = user.cart.findIndex(
+
+                (productId) =>
+                    productId.toString() === id
+
+            );
+
+
+            if (index !== -1) {
+
+                user.cart.splice(index, 1);
+
+                await user.save();
+
+            }
+
+
+            res.json({
+
+                message: "Quantity decreased",
+
+                count: user.cart.length,
+
+            });
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// REMOVE PRODUCT COMPLETELY FROM CART
+// =======================================================
+
+app.delete(
+    "/cart/remove/:id",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const { id } = req.params;
+
+
+            const user = await UserModel.findOneAndUpdate(
+
+                {
+                    mail: req.user.email.toLowerCase(),
+                },
+
+                {
+                    $pull: {
+                        cart: id,
+                    },
+                },
+
+                {
+                    new: true,
+                }
+
+            )
+            .select("cart")
+            .lean();
+
+
+            if (!user) {
+
+                return res.status(404).json({
+                    message: "User not found",
+                });
+
+            }
+
+
+            res.json({
+
+                message: "Item removed from cart",
+
+                count: user.cart.length,
+
+            });
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// CREATE RAZORPAY ORDER
+// =======================================================
+
+app.post(
+    "/create-order",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            const { amount } = req.body;
+
+
+            if (!amount || amount <= 0) {
+
+                return res.status(400).json({
+                    message: "Invalid amount",
+                });
+
+            }
+
+
+            const order =
+                await razorpay.orders.create({
+
+                    amount: Math.round(
+                        Number(amount) * 100
+                    ),
+
+                    currency: "INR",
+
+                    receipt:
+                        `receipt_${Date.now()}`,
+
+                });
+
+
+            res.json({
+
+                id: order.id,
+
+                currency: order.currency,
+
+                amount: order.amount,
+
+                key:
+                    process.env
+                        .RAZORPAY_API_KEY,
+
+            });
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// VERIFY PAYMENT
+// =======================================================
+
+app.post(
+    "/verify-payment",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const {
+
+                razorpay_order_id,
+
+                razorpay_payment_id,
+
+                razorpay_signature,
+
+                cartItems,
+
+                totalAmount,
+
+            } = req.body;
+
+
+            const body =
+                `${razorpay_order_id}|${razorpay_payment_id}`;
+
+
+            const expectedSignature =
+                crypto
+                    .createHmac(
+                        "sha256",
+                        process.env
+                            .RAZORPAY_API_SECRET
+                    )
+                    .update(body)
+                    .digest("hex");
+
+
+            if (
+                expectedSignature !==
+                razorpay_signature
+            ) {
+
+                return res.status(400).json({
+
+                    message:
+                        "Invalid payment signature",
+
+                    success: false,
+
+                });
+
+            }
+
+
+            const newOrder = {
+
+                orderId:
+                    razorpay_order_id,
+
+                paymentId:
+                    razorpay_payment_id,
+
+                amount:
+                    Number(totalAmount),
+
+                items:
+                    cartItems || [],
+
+                date:
+                    new Date(),
+
+                status:
+                    "SUCCESS",
+
+            };
+
+
+            // Save order + clear cart
+            // using one database operation
+
+            const user =
+                await UserModel.findOneAndUpdate(
+
+                    {
+                        mail:
+                            req.user.email
+                                .toLowerCase(),
+                    },
+
+                    {
+                        $push: {
+                            orders: {
+                                $each: [newOrder],
+                                $position: 0,
+                            },
+                        },
+
+                        $set: {
+                            cart: [],
+                        },
+                    },
+
+                    {
+                        new: true,
+                    }
+
+                );
+
+
+            if (!user) {
+
+                return res.status(404).json({
+                    message: "User not found",
+                });
+
+            }
+
+
+            res.json({
+
+                message:
+                    "Payment verified successfully",
+
+                success: true,
+
+            });
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// ORDER HISTORY
+// =======================================================
+
+app.get(
+    "/orders/history",
+    authenticate,
+    async (req, res, next) => {
+
+        try {
+
+            await connectDB();
+
+
+            const user = await UserModel
+                .findOne({
+                    mail:
+                        req.user.email
+                            .toLowerCase(),
+                })
+                .select("orders")
+                .lean();
+
+
+            if (!user) {
+
+                return res.status(404).json({
+                    message: "User not found",
+                });
+
+            }
+
+
+            res.json(user.orders || []);
+
+        } catch (error) {
+
+            next(error);
+
+        }
+
+    }
+);
+
+
+// =======================================================
+// 404
+// =======================================================
+
+app.use((req, res) => {
+
+    res.status(404).json({
+
+        message: "Route not found",
+
     });
+
+});
+
+
+// =======================================================
+// GLOBAL ERROR HANDLER
+// =======================================================
+
+app.use((error, req, res, next) => {
+
+    console.error(
+        `${req.method} ${req.path}`,
+        error
+    );
+
+
+    res.status(
+        error.status || 500
+    ).json({
+
+        message:
+            error.message ||
+            "Internal server error",
+
+    });
+
+});
+
+
+// =======================================================
+// LOCAL SERVER
+// =======================================================
+
+if (
+    process.env.NODE_ENV !== "production" &&
+    !process.env.VERCEL
+) {
+
+    app.listen(PORT, () => {
+
+        console.log(
+            `Server running on port ${PORT}`
+        );
+
+    });
+
 }
 
+
+// =======================================================
+// VERCEL EXPORT
+// =======================================================
+
+export default app;
